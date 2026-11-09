@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gemini Live</title>
+    <style>
+        body { margin: 0; background: #050510; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; text-align: center; }
+        h1 { color: #3b82f6; text-shadow: 0 0 10px #3b82f6; margin-bottom: 20px; }
+        .input-group { display: flex; flex-direction: column; gap: 10px; width: 80%; max-width: 300px; margin-bottom: 20px; }
+        input { padding: 12px; border-radius: 8px; border: 1px solid #444; background: #111; color: white; font-size: 16px; text-align: center; }
+        button { padding: 12px; font-size: 18px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        .save-btn { background: #2ecc71; color: white; }
+        .start-btn { background: #3b82f6; color: white; display: none; margin-top: 20px; width: 200px;}
+        #status { margin-top: 20px; font-size: 18px; color: #aaa; min-height: 50px; }
+        .orb { width: 100px; height: 100px; border-radius: 50%; background: radial-gradient(circle, #3b82f6, #1e3a8a); box-shadow: 0 0 40px #3b82f6; display: none; justify-content: center; align-items: center; font-size: 40px; margin: 20px auto; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); box-shadow: 0 0 20px #3b82f6; } 50% { transform: scale(1.1); box-shadow: 0 0 60px #3b82f6; } 100% { transform: scale(1); box-shadow: 0 0 20px #3b82f6; } }
+    </style>
+</head>
+<body>
+
+    <h1>FOX LIVE</h1>
+    
+    <div class="input-group" id="keySection">
+        <input type="password" id="apiKeyInput" placeholder="ضع مفتاح AQ هنا...">
+        <button class="save-btn" onclick="saveKey()">حفظ المفتاح</button>
+    </div>
+
+    <div class="orb" id="orb">✨</div>
+    <div id="status">جاري التحميل...</div>
+    
+    <button class="start-btn" id="startBtn" onclick="startSession()">بدء اللايف</button>
+
+    <script>
+        let API_KEY = localStorage.getItem('gemini_api_key') || "";
+        let socket, audioContext, mediaStream, workletNode;
+        let isRecording = false;
+
+        // التحقق من وجود المفتاح
+        window.onload = () => {
+            if (API_KEY) {
+                document.getElementById('keySection').style.display = 'none';
+                document.getElementById('startBtn').style.display = 'block';
+                document.getElementById('status').innerText = "جاهز للبدء. اضغط على الزرار.";
+            } else {
+                document.getElementById('status').innerText = "الرجاء إدخال المفتاح أولاً.";
+            }
+        };
+
+        function saveKey() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            if (!key) return alert("ضع المفتاح أولاً");
+            localStorage.setItem('gemini_api_key', key);
+            API_KEY = key;
+            document.getElementById('keySection').style.display = 'none';
+            document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('status').innerText = "✅ تم الحفظ. اضغط على بدء اللايف.";
+        }
+
+        async function startSession() {
+            if (!API_KEY) return alert("لا يوجد مفتاح");
+            
+            const status = document.getElementById('status');
+            const orb = document.getElementById('orb');
+            const startBtn = document.getElementById('startBtn');
+            
+            startBtn.style.display = 'none';
+            orb.style.display = 'flex';
+            status.innerText = "جاري الاتصال...";
+            
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                
+                const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${API_KEY}`;
+                socket = new WebSocket(url);
+
+                socket.onopen = () => {
+                    status.innerText = "متصل.. جاري التهيئة";
+                    socket.send(JSON.stringify({
+                        setup: {
+                            model: "models/gemini-2.0-flash-exp",
+                            generationConfig: { responseModalities: ["AUDIO"] },
+                            systemInstruction: { parts: [{ text: "أنت مساعد ذكي. رد بسرعة جداً وباللغة العربية." }] }
+                        }
+                    }));
+                    startAudioRecording();
+                };
+
+                socket.onmessage = async (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.serverContent && data.serverContent.modelTurn && data.serverContent.modelTurn.parts) {
+                        for (let part of data.serverContent.modelTurn.parts) {
+                            if (part.inlineData && part.inlineData.mimeType.startsWith('audio/')) {
+                                playAudio(part.inlineData.data);
+                                status.innerText = "FOX بيتكلم...";
+                            }
+                        }
+                    }
+                };
+
+                socket.onerror = (e) => {
+                    status.innerText = "❌ خطأ في الاتصال. قد يكون المفتاح غير صالح أو يحتاج تفعيل الدفع.";
+                    orb.style.display = 'none';
+                    startBtn.style.display = 'block';
+                };
+                
+                socket.onclose = () => {
+                    status.innerText = "انقطع الاتصال.";
+                    orb.style.display = 'none';
+                    startBtn.style.display = 'block';
+                };
+
+            } catch (e) {
+                status.innerText = "❌ فشل المايك: " + e.message;
+                orb.style.display = 'none';
+                startBtn.style.display = 'block';
+            }
+        }
+
+        async function startAudioRecording() {
+            document.getElementById('status').innerText = "أنا أسمعك...";
+            
+            await audioContext.audioWorklet.addModule('data:application/javascript;base64,' + btoa(`
+                class RecorderProcessor extends AudioWorkletProcessor {
+                    process(inputs, outputs, parameters) {
+                        const input = inputs[0];
+                        if (input.length > 0) {
+                            const channelData = input[0];
+                            this.port.postMessage(channelData);
+                        }
+                        return true;
+                    }
+                }
+                registerProcessor('recorder-processor', RecorderProcessor);
+            `));
+
+            const source = audioContext.createMediaStreamSource(mediaStream);
+            workletNode = new AudioWorkletNode(audioContext, 'recorder-processor');
+            source.connect(workletNode);
+
+            workletNode.port.onmessage = (e) => {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    const float32Data = e.data;
+                    const int16Data = new Int16Array(float32Data.length);
+                    for (let i = 0; i < float32Data.length; i++) {
+                        int16Data[i] = Math.max(-1, Math.min(1, float32Data[i])) * 0x7FFF;
+                    }
+                    const base64 = btoa(String.fromCharCode(...new Uint8Array(int16Data.buffer)));
+                    socket.send(JSON.stringify({
+                        realtimeInput: {
+                            mediaChunks: [{ mimeType: "audio/pcm;rate=16000", data: base64 }]
+                        }
+                    }));
+                }
+            };
+        }
+
+        function playAudio(base64) {
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const int16 = new Int16Array(bytes.buffer);
+            const float32 = new Float32Array(int16.length);
+            for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
+
+            const buffer = audioContext.createBuffer(1, float32.length, 24000);
+            buffer.getChannelData(0).set(float32);
+            
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+            source.start();
+        }
+    </script>
+</body>
+</html>
